@@ -10,10 +10,6 @@ export async function GET(request: NextRequest) {
   const accessToken = request.cookies.get("access_token")?.value;
   const refreshToken = request.cookies.get("refresh_token")?.value;
 
-  // if xaina bhane no auth
-  if (!accessToken && !refreshToken) {
-    return NextResponse.json({ user: null, authenticated: false });
-  }
   if (accessToken) {
     const payload = verifyAccessToken(accessToken);
     if (payload) {
