@@ -1,4 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "../../../../../../lib/prisma";
+import {
+  generateAccessToken,
+  generateRefreshToken,
+} from "../../../../../../lib/jwt";
+
 // typescript ko lagi
 interface GoogleTokenResponse {
   access_token: string;
@@ -70,29 +76,60 @@ export async function GET(request: NextRequest) {
     }
     // json ma ako data lai parse gareko
     const userData: GoogleUserInfo = await userResponse.json();
-    // aba session create garni
-    const response = NextResponse.redirect(
-      `${process.env.NEXTAUTH_URL}?success=true`
-    );
-    // http only cookies set
-    response.cookies.set(
-      "user_session",
-      JSON.stringify({
-        id: userData.id,
+
+    // create or update user in db
+    const user = await prisma.user.upsert({
+      where: { email: userData.email },
+      update: {
+        name: userData.name,
+        picture: userData.picture,
+        googleId: userData.id,
+      },
+      create: {
         email: userData.email,
         name: userData.name,
         picture: userData.picture,
-        access_token: tokens.access_token,
-        expires_at: Date.now() + tokens.expires_in * 1000,
-      }),
-      {
-        httpOnly: true, // cross scripting bata protection
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        maxAge: tokens.expires_in, //cookie expiration
-        path: "/", // this is available for entire file
-      }
+        googleId: userData.id,
+      },
+    });
+
+    // creating session in database
+    const session = await prisma.session.create({
+      data: {
+        userId: user.id,
+        expiresAt: new Date(Date.now() + tokens.expires_in * 1000),
+      },
+    });
+    // creating JWT tokens
+    const jwtPayload = {
+      userId: user.id,
+      email: user.email,
+      sessionId: session.id,
+    };
+    const accessToken = generateAccessToken(jwtPayload);
+    const refreshToken = generateRefreshToken(jwtPayload);
+
+    // set JWT tokens as HTTP-only cookies
+    const response = NextResponse.redirect(
+      `${process.env.NEXTAUTH_URL}?success=true`
     );
+
+    // http only cookies set
+    response.cookies.set("access_token", accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 15 * 60, // 15 min bhaneko
+      path: "/",
+    });
+
+    response.cookies.set("refresh_token", refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 7 * 24 * 60 * 60,
+      path: "/",
+    });
     return response;
   } catch (error) {
     console.error("call back error", error);
