@@ -30,7 +30,7 @@ export default function Home() {
           <div className="space-y-2">
             <p>Welcome, {user?.name}</p>
             <Image
-              src={user?.picture || ""}
+              src={user?.image || ""}
               alt="avatar"
               width={48}
               height={48}

@@ -11,6 +11,7 @@ interface AuthState {
   user: User | null;
   authenticated: boolean;
   loading: boolean;
+  error?: string;
 }
 export function useAuth() {
   const [authState, setAuthState] = useState<AuthState>({
@@ -18,59 +19,126 @@ export function useAuth() {
     authenticated: false, // auth status ko lagi
     loading: true, // for loading state
   });
-  // check session
-  const checkSession = useCallback(async () => {
+  // check /auth/me
+  const checkAuth = useCallback(async () => {
     try {
-      // session api lai call garxa
-      const response = await fetch("/api/auth/session");
+      // going to /auth/me route
+      const response = await fetch("/api/auth/me");
       const data = await response.json();
-      console.log("Session API response:", data); // check garnalai
-      // state update gareko by using session data
-      setAuthState({
-        user: data.user
-          ? { ...data.user, image: data.user.picture || data.user.image }
-          : null,
-        authenticated: data.authenticated,
-        loading: false,
-      });
+      if (response.ok) {
+        // success bhayo
+        setAuthState({
+          user: data.user,
+          authenticated: true,
+          loading: false,
+        });
+      } else if (response.status === 401) {
+        // boom 401
+        // access token expired
+        console.log("Access token expired, attempting refresh");
+        // attemptrefresh if 401 -- imp --- xa ---
+        const refreshSuccess = await attemptRefresh();
+
+        if (!refreshSuccess) {
+          setAuthState({
+            user: null,
+            authenticated: false,
+            loading: false,
+            error: data.error,
+          });
+        }
+      } else {
+        setAuthState({
+          user: null,
+          authenticated: false,
+          loading: false,
+          error: data.error,
+        });
+      }
     } catch (error) {
-      console.error("session check failed:", error);
       setAuthState({
         user: null,
         authenticated: false,
         loading: false,
+        error: `Failed to check authentication ${error}`,
       });
     }
   }, []);
-  // signin lai initiate garxa
-  const signIn = useCallback(() => {
-    window.location.href = "/api/auth/google";
-  }, []);
-  // for signout
-  const signOut = useCallback(async () => {
+  // --- attempt refresh ---
+  // step 2: try refresh token
+  const attemptRefresh = useCallback(async (): Promise<boolean> => {
+    // calling refresh token
     try {
-      // call logout api
-      await fetch("/api/auth/logout", { method: "POST" });
-      // local state lai change garxa
+      const response = await fetch("/api/auth/refresh", {
+        method: "POST",
+      });
+      if (response.ok) {
+        console.log("Refresh successfully, calling auth/me again");
+        // calling /auth/me only if refresh ok
+        const meResponse = await fetch("/api/auth/me");
+        const meData = await meResponse.json();
+
+        if (meResponse.ok) {
+          setAuthState({
+            user: meData.user,
+            authenticated: true,
+            loading: false,
+          });
+          return true;
+        }
+      }
+      console.log("Refresh failed");
+      return false;
+    } catch (error) {
+      console.error("Refresh error:", error);
+      return false;
+    }
+  }, []);
+
+  // manual refresh function
+  const refreshAuth = useCallback(async () => {
+    setAuthState((prev) => ({ ...prev, loading: true }));
+    const success = await attemptRefresh();
+    if (!success) {
       setAuthState({
         user: null,
         authenticated: false,
         loading: false,
+        error: "Refresh failed",
+      });
+    }
+  }, [attemptRefresh]);
+
+  const signIn = useCallback(() => {
+    window.location.href = "/api/auth/google";
+  }, []);
+
+  const signOut = useCallback(async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+      setAuthState({
+        user: null,
+        authenticated: false,
+        loading: true,
       });
       window.location.href = "/";
     } catch (error) {
       console.error("Sign out failed", error);
     }
   }, []);
-  // hook first use huda session check garxa
+
+  // hook first use huda auth check garxa
   useEffect(() => {
-    checkSession();
-  }, [checkSession]);
+    checkAuth();
+  }, [checkAuth]);
   // return state ra function
   return {
     ...authState,
     signIn,
     signOut,
-    refreshSession: checkSession,
+    refreshAuth,
+    checkAuth,
   };
 }
+
+// curl -b "access_token=valid_token" http://localhost:3000/api/auth/me --> 200 ok
